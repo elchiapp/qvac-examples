@@ -623,10 +623,25 @@
       function currentSourceForSetup(){ return sttLangs[fromLang]?fromLang:"en"; }
       function paintFrom(){ $("fromDD").innerHTML=IC.mic+'<span>'+esc(langName(sttLangs,fromLang))+'</span>'+statusDot(setupStatus.sources&&setupStatus.sources[fromLang])+IC.chevron; }
       function paintTo(){ $("toDD").innerHTML=IC.translate+'<span>'+esc(langName(ttsLangs,tgtLang))+'</span>'+statusDot(setupStatus.targets&&setupStatus.targets[tgtLang])+IC.chevron; }
-      var lastPrepareKey="", statusPoll=null;
+      var lastPrepareKey="", statusPoll=null, setupWatchdog=null;
+      function clearSetupWatchdog(){ clearTimeout(setupWatchdog); setupWatchdog=null; }
+      function scheduleSetupWatchdog(){
+        clearSetupWatchdog();
+        setupWatchdog=setTimeout(function(){
+          refreshSetupStatus().then(function(){
+            var c=currentSetupStatus();
+            if(pairSetupLocal&&c&&c.cached&&!c.preparing){
+              pairSetupLocal=false;
+              updatePairSetupUi();
+            }
+          });
+        },45000);
+      }
       function applySetupStatus(d){
         if(!d)return;
         setupStatus={current:d.current||null,sources:d.sources||{},targets:d.targets||{}};
+        var c=currentSetupStatus();
+        if(c&&c.ready&&!c.preparing){ pairSetupLocal=false; clearSetupWatchdog(); }
         paintFrom(); paintTo();
         updatePairSetupUi();
         if(isPairSetupBusy()||setupStatus.current&&setupStatus.current.preparing) scheduleStatusPoll();
@@ -642,7 +657,7 @@
       function scheduleStatusPoll(){ clearTimeout(statusPoll); statusPoll=setTimeout(refreshSetupStatus,1200); }
       function prepareSelected(){
         if(!fromLang||!tgtLang){ return; }
-        if(activeVoice) beginPairSetup();
+        if(activeVoice){ beginPairSetup(); scheduleSetupWatchdog(); }
         refreshSetupStatus();
         if(!activeVoice){ updatePairSetupUi(); return; }
         var prepFrom=currentSourceForSetup();

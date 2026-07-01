@@ -673,11 +673,12 @@ function pairSetupStatus(from, to) {
     const models = requiredModelsFor(from, to).map(({ role, desc }) => ({ role, ...modelCacheStatus(desc) }));
     const allFiles = models.flatMap((m) => m.files || []);
     const aggregate = aggregateFiles(allFiles);
+    const ready = aggregate.cached && isPairReady(from, to);
     return {
       from, to,
       cached: aggregate.cached,
-      ready: aggregate.cached && isPairReady(from, to),
-      preparing: isPairPreparing(from, to),
+      ready,
+      preparing: !ready && isPairPreparing(from, to),
       missingBytes: aggregate.missingBytes,
       totalBytes: aggregate.totalBytes,
       missingCount: aggregate.missingCount,

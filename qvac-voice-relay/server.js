@@ -31,6 +31,7 @@ import { spawn } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import os from "os";
 import path from "path";
+import { createWorkerQueue } from "./worker-queue.mjs";
 // Apply the on-disk SDK patch BEFORE importing the SDK. The Chatterbox plugin in
 // 0.13.5 does not forward `kvCacheType` or `speed` to the tts-ggml engine, and its
 // load schema is .strict() (rejects unknown keys). Without this, kvCacheType cannot
@@ -92,6 +93,14 @@ const BERGAMOT = {};
 for (const [name, desc] of Object.entries(qvac)) {
   const m = /^BERGAMOT_([A-Z]{2,3})_([A-Z]{2,3})$/.exec(name);
   if (m && desc?.src) BERGAMOT[`${m[1].toLowerCase()}|${m[2].toLowerCase()}`] = desc;
+}
+function modelDescriptorId(desc) {
+  return desc?.registryPath || desc?.src || desc?.name || "";
+}
+const BERGAMOT_KEY_BY_DESC = new Map();
+for (const [key, desc] of Object.entries(BERGAMOT)) {
+  const id = modelDescriptorId(desc);
+  if (id && !BERGAMOT_KEY_BY_DESC.has(id)) BERGAMOT_KEY_BY_DESC.set(id, key);
 }
 const PARAKEET_STT = qvac.PARAKEET_TDT_0_6B_V3_Q8_0 || qvac.PARAKEET_CTC_0_6B_Q8_0;
 const STT_CACHE_KEY = "parakeet";
@@ -156,14 +165,23 @@ function nmtModelsFor(from, to) {
   }
   throw new Error(`No Bergamot translation path for ${from} -> ${to}`);
 }
-function requiredModelsFor(from, to) {
+function textModelsFor(from, to) {
   const models = [];
   if (STT_PARAKEET[from]) models.push({ role: "speech", desc: STT_PARAKEET[from].modelSrc });
   for (const desc of nmtModelsFor(from, to)) models.push({ role: "translation", desc });
+  return models;
+}
+function voiceModelsFor() {
+  const models = [];
   if (activeRefPath()) {
     models.push({ role: "voice", desc: TTS_T3_MULTILINGUAL_CHATTERBOX_Q8_0 });
     models.push({ role: "voice", desc: TTS_S3GEN_MULTILINGUAL_CHATTERBOX });
   }
+  return models;
+}
+function requiredModelsFor(from, to) {
+  const models = textModelsFor(from, to);
+  models.push(...voiceModelsFor());
   return models;
 }
 
@@ -179,6 +197,7 @@ const TTS_STREAM_RMS_FLOOR = 0.012;
 // so a normal first speak only pays for the selected target language.
 const TTS_WARM_LANGS = (process.env.TTS_WARM_LANGS || "en,es,fr,it,de").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 const TTS_PREWARM_DEMO_SET = /^(1|true|yes)$/i.test(process.env.TTS_PREWARM_DEMO_SET || "");
+const BACKGROUND_WORKER_IDLE_MS = Math.max(0, Number(process.env.BACKGROUND_WORKER_IDLE_MS || 1200));
 // LRU must hold the whole warm set (+1 spare) or warming the last would evict the first.
 const TTS_LRU_MAX = Math.max(2, TTS_WARM_LANGS.length + 1);
 
@@ -215,15 +234,12 @@ let store = loadStore();
 
 // ---------- worker serialization ----------
 // tts-ggml 0.3.x GPU/Metal SIGSEGVs if two worker operations (loadModel / synth /
-// transcribe / translate) overlap on the single Bare worker (0.2.x tolerated it). We
-// serialize every worker-touching unit (background warm, /api/speak, /api/transcribe)
-// through one promise chain so they can never race. Each call site is a non-nested leaf,
-// so there is no re-entrancy / deadlock. The lock releases on both success and error.
-let workerChain = Promise.resolve();
-function serializeWorker(fn) {
-  const run = workerChain.then(fn, fn);
-  workerChain = run.then(() => {}, () => {});
-  return run;
+// transcribe / translate) overlap on the single Bare worker (0.2.x tolerated it).
+// Foreground calls stay serialized but can jump ahead of queued background warmups,
+// which prevents a cached translation from waiting behind a multi-second TTS warm.
+const workerQueue = createWorkerQueue({ idleMs: BACKGROUND_WORKER_IDLE_MS });
+function serializeWorker(fn, options) {
+  return workerQueue.run(fn, options);
 }
 
 // ---------- model caches ----------
@@ -235,7 +251,7 @@ const nmtCache = new Map();       // `${from}|${to}` -> modelId
 const ttsCache = new Map();       // key -> modelId  (insertion order = LRU order)
 const ttsLoading = new Map();     // key -> Promise<modelId>  (dedupe concurrent loads)
 const ttsWarmed = new Set();      // modelIds already primed with a throwaway synth
-const ttsWarmQueued = new Set();  // `${ref}|${lang}` warm jobs already queued
+const ttsWarmErrors = new Map();  // `${ref}|${lang}` -> last setup/load failure
 const nmtWarmQueued = new Set();  // `${from}|${to}` warm jobs already queued
 const sttWarmQueued = new Set();  // transcription warm jobs already queued
 let setupEpoch = 0;                // incremented on reset so queued setup can self-cancel
@@ -273,7 +289,7 @@ function invalidateSetupQueues() {
   setupEpoch++;
   sttWarmQueued.clear();
   nmtWarmQueued.clear();
-  ttsWarmQueued.clear();
+  ttsWarmErrors.clear();
 }
 function evictStt() {
   sttCache.delete(STT_CACHE_KEY);
@@ -287,7 +303,7 @@ function evictTtsKey(key) {
   const id = ttsCache.get(key);
   if (id) ttsWarmed.delete(id);
   ttsCache.delete(key);
-  ttsWarmQueued.delete(key);
+  ttsWarmErrors.delete(key);
 }
 
 // Drop ALL resident TTS models. Called when the active voice changes (enroll /
@@ -298,7 +314,7 @@ async function dropTts() {
     ttsWarmed.delete(id);
   }
   ttsCache.clear();
-  ttsWarmQueued.clear();
+  ttsWarmErrors.clear();
 }
 async function dropAllResidentModels() {
   await dropTts();
@@ -312,7 +328,7 @@ async function dropAllResidentModels() {
   nmtCache.clear();
   sttWarmQueued.clear();
   nmtWarmQueued.clear();
-  ttsWarmQueued.clear();
+  ttsWarmErrors.clear();
 }
 async function clearVoices() {
   for (const v of store.voices) {
@@ -323,6 +339,14 @@ async function clearVoices() {
   store.activeId = null;
   saveStore();
   return had;
+}
+
+function voiceReferenceErrorMessage(e) {
+  const msg = String(e?.message || e || "");
+  if (/reference_audio failed validation|reference-audio is only|requires strictly more than 5/i.test(msg)) {
+    return "Voice sample is too short for voice matching. Record a new voice sample with 10-15 seconds of clear speech.";
+  }
+  return msg || "Voice model setup failed.";
 }
 
 async function ensureTranscription(lang) {
@@ -376,6 +400,7 @@ async function ensureTts(lang) {
   if (ttsLoading.has(key)) return ttsLoading.get(key);
 
   const loadPromise = (async () => {
+    ttsWarmErrors.delete(key);
     log(`Loading reference-matched TTS (target=${lang})... first load for this voice+language is the slow step.`);
     const id = await withProgress("voice", (onProgress) => loadModel({
       modelSrc: TTS_T3_MULTILINGUAL_CHATTERBOX_Q8_0.src,
@@ -394,6 +419,7 @@ async function ensureTts(lang) {
       },
       onProgress: (p) => { if (p && p.percentage != null) { log(`  chatterbox: ${p.percentage.toFixed(0)}%`); onProgress(p); } },
     }));
+    ttsWarmErrors.delete(key);
     ttsCache.set(key, id);
     // Evict least-recently-used beyond the cap.
     while (ttsCache.size > TTS_LRU_MAX) {
@@ -401,7 +427,7 @@ async function ensureTts(lang) {
       const oldId = ttsCache.get(oldKey);
       ttsCache.delete(oldKey);
       ttsWarmed.delete(oldId);
-      ttsWarmQueued.delete(oldKey);
+      ttsWarmErrors.delete(oldKey);
       try { await unloadModel({ modelId: oldId, clearStorage: false }); } catch (e) {}
       log(`Evicted TTS model (LRU): ${oldKey}`);
     }
@@ -409,6 +435,11 @@ async function ensureTts(lang) {
   })();
   ttsLoading.set(key, loadPromise);
   try { return await loadPromise; }
+  catch (e) {
+    const message = voiceReferenceErrorMessage(e);
+    ttsWarmErrors.set(key, message);
+    throw new Error(message);
+  }
   finally { ttsLoading.delete(key); }
 }
 
@@ -592,7 +623,7 @@ function warmTranscription(lang) {
     } finally {
       sttWarmQueued.delete(STT_CACHE_KEY);
     }
-  }).catch((e) => log(`warm parakeet skipped: ${e.message}`));
+  }, { background: true }).catch((e) => log(`warm parakeet skipped: ${e.message}`));
 }
 function warmNmtPair(from, to) {
   if (from === to) return;
@@ -607,74 +638,50 @@ function warmNmtPair(from, to) {
     } finally {
       nmtWarmQueued.delete(nmtKey);
     }
-  }).catch((e) => log(`warm nmt skipped: ${e.message}`));
+  }, { background: true }).catch((e) => log(`warm nmt skipped: ${e.message}`));
 }
-function warmTtsLang(lang) {
-  if (!lang || !TTS_LANGS[lang]) return;
-  const ref = activeRefPath();
-  if (ref && existsSync(ref)) {
-    const ttsKey = `${ref}|${lang}`;
-    const cachedTtsId = ttsCache.get(ttsKey);
-    if (!(cachedTtsId && ttsWarmed.has(cachedTtsId)) && !ttsWarmQueued.has(ttsKey)) {
-      const epoch = setupEpoch;
-      ttsWarmQueued.add(ttsKey);
-      serializeWorker(async () => {
-        try {
-          if (epoch !== setupEpoch) return;
-          if (activeRefPath() !== ref) return; // active voice changed before this warm ran
-          await prewarmTts(ttsKey, await ensureTts(lang));
-        } finally {
-          ttsWarmQueued.delete(ttsKey);
-        }
-      }).catch((e) => log(`warm tts skipped: ${e.message}`));
-    }
-  }
-}
-// Prepare every model the selected source -> target pair needs: source STT,
-// translation, and the target-language voice model for the active reference.
+// Prepare only the text-side models for the selected source -> target pair.
+// Chatterbox is loaded lazily when the user asks to play synthesized audio.
 function preparePair(from, to) {
   if (!STT_PARAKEET[from] || !TTS_LANGS[to]) return;
   warmTranscription(from);
   warmNmtPair(from, to);
-  warmTtsLang(to);
 }
-// Pre-warm the whole demo language set (background) so switching between them is instant.
-// `priority` (the client's currently-selected target) is warmed FIRST so the first speak is
-// ready before the rest of the set loads. Skips the voice's own clone language (not a target).
+// Pre-warm the text models for the whole demo language set (background) so switching
+// between them is instant. Skips the voice's own clone language (not a target).
 function warmDemoSet(priority, from = "en") {
   const order = [priority, ...TTS_WARM_LANGS].filter((l, i, a) => l && TTS_LANGS[l] && l !== from && a.indexOf(l) === i);
   if (order.length) log(`Warming demo set: ${order.join(", ")}`);
   for (const lang of order) preparePair(from, lang);
 }
 function isPairPreparing(from, to) {
-  const ref = activeRefPath();
   return sttWarmQueued.has(STT_CACHE_KEY) ||
-    (from !== to && nmtWarmQueued.has(`${from}|${to}`)) ||
-    (!!ref && (ttsWarmQueued.has(`${ref}|${to}`) || ttsLoading.has(`${ref}|${to}`)));
+    (from !== to && nmtWarmQueued.has(`${from}|${to}`));
 }
 function isPairReady(from, to) {
-  const ref = activeRefPath();
-  const ttsId = ref ? ttsCache.get(`${ref}|${to}`) : null;
-  return sttCache.has(STT_CACHE_KEY) &&
-    (from === to || nmtCache.has(`${from}|${to}`)) &&
-    (!ref || (ttsId && ttsWarmed.has(ttsId)));
+  return Boolean(sttCache.has(STT_CACHE_KEY) &&
+    (from === to || nmtCache.has(`${from}|${to}`)));
 }
 function pairSetupStatus(from, to) {
   from = STT_PARAKEET[from] ? from : "en";
   to = TTS_LANGS[to] ? to : defaultTargetFor(from);
   try {
-    const models = requiredModelsFor(from, to).map(({ role, desc }) => ({ role, ...modelCacheStatus(desc) }));
-    const allFiles = models.flatMap((m) => m.files || []);
-    const aggregate = aggregateFiles(allFiles);
+    const textModels = textModelsFor(from, to).map(({ role, desc }) => ({ role, ...modelCacheStatus(desc) }));
+    const voiceModels = voiceModelsFor().map(({ role, desc }) => ({ role, ...modelCacheStatus(desc) }));
+    const textFiles = textModels.flatMap((m) => m.files || []);
+    const aggregate = aggregateFiles(textFiles);
+    const ref = activeRefPath();
+    const ttsError = ref ? ttsWarmErrors.get(`${ref}|${to}`) : "";
     return {
       from, to,
       cached: aggregate.cached,
-      ready: aggregate.cached && isPairReady(from, to),
+      ready: isPairReady(from, to),
       preparing: isPairPreparing(from, to),
       missingBytes: aggregate.missingBytes,
       totalBytes: aggregate.totalBytes,
       missingCount: aggregate.missingCount,
-      models: models.map((m) => ({ role: m.role, name: m.name, cached: m.cached, missingBytes: m.missingBytes, totalBytes: m.totalBytes })),
+      ...(ttsError ? { voiceError: ttsError } : {}),
+      models: [...textModels, ...voiceModels].map((m) => ({ role: m.role, name: m.name, cached: m.cached, missingBytes: m.missingBytes, totalBytes: m.totalBytes })),
     };
   } catch (e) {
     return { from, to, cached: false, ready: false, preparing: false, missingBytes: 0, totalBytes: 0, missingCount: 0, error: e.message, models: [] };
@@ -690,6 +697,224 @@ function setupStatusGrid(from, to) {
   return { current: pairSetupStatus(from, to), sources, targets };
 }
 
+function modelGroupStatus(descs) {
+  const files = [];
+  for (const desc of descs) {
+    try { files.push(...(modelCacheStatus(desc).files || [])); } catch {}
+  }
+  return aggregateFiles(files);
+}
+
+function makePrecachePlan() {
+  const items = [];
+  const add = ({ id, role, label, descs, run, available = true, unavailableReason = "" }) => {
+    const status = () => modelGroupStatus(descs);
+    items.push({ id, role, label, descs, run, available, unavailableReason, status });
+  };
+
+  if (PARAKEET_STT) {
+    add({
+      id: `speech:${modelDescriptorId(PARAKEET_STT)}`,
+      role: "speech",
+      label: "Speech recognition",
+      descs: [PARAKEET_STT],
+      run: async (job) => {
+        let id = null;
+        try {
+          id = await withProgress("speech recognition", (onProgress) => loadModel({
+            modelSrc: PARAKEET_STT,
+            modelType: "parakeet-transcription",
+            modelConfig: { maxThreads: THREADS, useGPU: true, sampleRate: 16000, channels: 1 },
+            onProgress: (p) => { if (p?.percentage != null) job.currentProgress = p.percentage; onProgress(p); },
+          }));
+        } finally {
+          if (id && ![...sttCache.values()].includes(id)) {
+            try { await unloadModel({ modelId: id, clearStorage: false }); } catch {}
+          }
+        }
+      },
+    });
+  }
+
+  const nmtItems = new Map();
+  for (const from of Object.keys(STT_PARAKEET)) {
+    for (const to of Object.keys(TTS_LANGS)) {
+      try {
+        for (const desc of nmtModelsFor(from, to)) {
+          const key = BERGAMOT_KEY_BY_DESC.get(modelDescriptorId(desc));
+          if (key && !nmtItems.has(key)) nmtItems.set(key, desc);
+        }
+      } catch {}
+    }
+  }
+  for (const [key, desc] of [...nmtItems.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const [from, to] = key.split("|");
+    add({
+      id: `translation:${key}`,
+      role: "translation",
+      label: `${labelForLang(from)} -> ${labelForLang(to)}`,
+      descs: [desc],
+      run: async (job) => {
+        let id = null;
+        try {
+          id = await withProgress("translation", (onProgress) => loadModel({
+            modelSrc: desc,
+            modelType: "nmt",
+            modelConfig: { engine: "Bergamot", from, to },
+            onProgress: (p) => { if (p?.percentage != null) job.currentProgress = p.percentage; onProgress(p); },
+          }));
+        } finally {
+          if (id && ![...nmtCache.values()].includes(id)) {
+            try { await unloadModel({ modelId: id, clearStorage: false }); } catch {}
+          }
+        }
+      },
+    });
+  }
+
+  const ref = activeRefPath();
+  add({
+    id: "voice:chatterbox",
+    role: "voice",
+    label: "Reference-matched voice",
+    descs: [TTS_T3_MULTILINGUAL_CHATTERBOX_Q8_0, TTS_S3GEN_MULTILINGUAL_CHATTERBOX],
+    available: !!ref,
+    unavailableReason: "Enroll a voice to pre-cache voice model files.",
+    run: async (job) => {
+      if (!ref) return;
+      let id = null;
+      try {
+        const lang = TTS_LANGS.en ? "en" : Object.keys(TTS_LANGS)[0];
+        id = await withProgress("voice", (onProgress) => loadModel({
+          modelSrc: TTS_T3_MULTILINGUAL_CHATTERBOX_Q8_0.src,
+          modelType: "tts-ggml",
+          modelConfig: {
+            ttsEngine: "chatterbox",
+            language: lang,
+            s3genModelSrc: TTS_S3GEN_MULTILINGUAL_CHATTERBOX.src,
+            referenceAudioSrc: ref,
+            useGPU: true,
+            kvCacheType: "f16",
+            speed: speedFor(lang),
+          },
+          onProgress: (p) => { if (p?.percentage != null) job.currentProgress = p.percentage; onProgress(p); },
+        }));
+      } finally {
+        if (id && ![...ttsCache.values()].includes(id)) {
+          try { await unloadModel({ modelId: id, clearStorage: false }); } catch {}
+        }
+      }
+    },
+  });
+
+  return items;
+}
+
+function precacheSummary() {
+  const plan = makePrecachePlan();
+  const items = plan.map((item) => {
+    const status = item.status();
+    return {
+      id: item.id,
+      role: item.role,
+      label: item.label,
+      available: item.available,
+      unavailableReason: item.unavailableReason,
+      cached: status.cached,
+      missingBytes: status.missingBytes,
+      totalBytes: status.totalBytes,
+      missingCount: status.missingCount,
+    };
+  });
+  const availableItems = items.filter((item) => item.available);
+  const aggregate = aggregateFiles(plan.filter((item) => item.available).flatMap((item) => item.status().files || []));
+  return {
+    total: availableItems.length,
+    cached: availableItems.filter((item) => item.cached).length,
+    missingBytes: aggregate.missingBytes,
+    totalBytes: aggregate.totalBytes,
+    missingCount: aggregate.missingCount,
+    unavailable: items.filter((item) => !item.available).length,
+    items,
+  };
+}
+
+let precacheJob = null;
+function precacheStatus() {
+  const summary = precacheSummary();
+  const job = precacheJob ? {
+    id: precacheJob.id,
+    state: precacheJob.state,
+    total: precacheJob.total,
+    completed: precacheJob.state === "running"
+      ? Math.min(precacheJob.total, Math.max(precacheJob.completed, summary.cached))
+      : precacheJob.completed,
+    current: precacheJob.current,
+    currentProgress: precacheJob.currentProgress,
+    error: precacheJob.error,
+    startedAt: precacheJob.startedAt,
+    finishedAt: precacheJob.finishedAt,
+  } : null;
+  return { ok: true, running: job?.state === "running", job, ...summary };
+}
+
+function startPrecacheAll() {
+  if (precacheJob?.state === "running") return;
+  const plan = makePrecachePlan().filter((item) => item.available);
+  const planStatus = plan.map((item) => ({ item, status: item.status() }));
+  const pending = planStatus.filter(({ status }) => !status.cached).map(({ item }) => item);
+  const cachedAtStart = plan.length - pending.length;
+  const job = {
+    id: randomUUID(),
+    state: "running",
+    total: plan.length,
+    completed: cachedAtStart,
+    cachedAtStart,
+    pending: pending.length,
+    current: null,
+    currentProgress: null,
+    error: "",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+  precacheJob = job;
+  if (pending.length === 0) {
+    job.state = "done";
+    job.finishedAt = new Date().toISOString();
+    return;
+  }
+  (async () => {
+    try {
+      for (const item of pending) {
+        const status = item.status();
+        if (status.cached) {
+          job.completed = Math.min(job.total, job.completed + 1);
+          continue;
+        }
+        job.current = { id: item.id, role: item.role, label: item.label };
+        job.currentProgress = null;
+        log(`Pre-cache: ${item.label}`);
+        await serializeWorker(() => item.run(job), { background: true });
+        job.completed = Math.min(job.total, job.completed + 1);
+      }
+      job.state = "done";
+    } catch (e) {
+      job.state = "error";
+      job.error = e.message || String(e);
+      log(`Pre-cache failed: ${job.error}`);
+    } finally {
+      job.current = null;
+      job.currentProgress = null;
+      job.finishedAt = new Date().toISOString();
+    }
+  })().catch((e) => {
+    job.state = "error";
+    job.error = e.message || String(e);
+    job.current = null;
+    job.finishedAt = new Date().toISOString();
+  });
+}
+
 // ---------- audio helpers ----------
 function toWav16k(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
@@ -699,6 +924,27 @@ function toWav16k(inputPath, outputPath) {
     ff.on("close", (c) => (c === 0 && existsSync(outputPath)) ? resolve(outputPath) : reject(new Error("ffmpeg failed: " + err.slice(-300))));
     ff.on("error", (e) => reject(new Error("ffmpeg not found: " + e.message)));
   });
+}
+function wavDurationSeconds(wavPath) {
+  const buf = readFileSync(wavPath);
+  if (buf.length < 44 || buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE") return 0;
+  let offset = 12, sampleRate = 0, channels = 0, bitsPerSample = 0, dataBytes = 0;
+  while (offset + 8 <= buf.length) {
+    const chunkId = buf.toString("ascii", offset, offset + 4);
+    const chunkSize = buf.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+    if (chunkId === "fmt " && chunkSize >= 16 && chunkStart + 16 <= buf.length) {
+      channels = buf.readUInt16LE(chunkStart + 2);
+      sampleRate = buf.readUInt32LE(chunkStart + 4);
+      bitsPerSample = buf.readUInt16LE(chunkStart + 14);
+    } else if (chunkId === "data") {
+      dataBytes = Math.min(chunkSize, Math.max(0, buf.length - chunkStart));
+      break;
+    }
+    offset = chunkStart + chunkSize + (chunkSize % 2);
+  }
+  const bytesPerSecond = sampleRate * channels * (bitsPerSample / 8);
+  return bytesPerSecond > 0 ? dataBytes / bytesPerSecond : 0;
 }
 function pcmToWav(samples, sr) {
   const arr = (samples instanceof Int16Array) ? samples : Int16Array.from(samples);
@@ -848,6 +1094,15 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, ...setupStatusGrid(from, to) });
     }
 
+    if (req.method === "GET" && pathOnly === "/api/precache") {
+      return send(res, 200, precacheStatus());
+    }
+
+    if (req.method === "POST" && pathOnly === "/api/precache") {
+      startPrecacheAll();
+      return send(res, 200, precacheStatus());
+    }
+
     if (req.method === "POST" && pathOnly === "/api/reset") {
       invalidateSetupQueues();
       const cleared = await serializeWorker(async () => {
@@ -888,16 +1143,22 @@ const server = http.createServer(async (req, res) => {
       const id = randomUUID();
       const file = `${id}.16k.wav`;
       const inPath = path.join(TMP, "enroll_" + id);
+      const voicePath = path.join(VOICES_DIR, file);
       try {
         writeFileSync(inPath, buf);
-        await toWav16k(inPath, path.join(VOICES_DIR, file));
+        await toWav16k(inPath, voicePath);
+        const duration = wavDurationSeconds(voicePath);
+        if (duration <= 5) {
+          try { unlinkSync(voicePath); } catch {}
+          return send(res, 400, { error: `Voice sample is ${duration.toFixed(1)}s. Record 10-15 seconds of clear speech.` });
+        }
         const voice = { id, name, lang, createdAt: new Date().toISOString(), file };
         invalidateSetupQueues();
         await serializeWorker(async () => {
           store.voices.unshift(voice);
           store.activeId = id;
           saveStore();
-          await dropTts();   // new active voice -> the client warms the chosen target via /api/warm
+          await dropTts();   // new active voice -> Chatterbox reloads on next Play request
         });
         log(`Voice enrolled: "${name}" (${(buf.length / 1024).toFixed(0)} KB).`);
         return send(res, 200, { voice: publicVoice(voice), activeId: store.activeId });
@@ -919,8 +1180,8 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, activeId: store.activeId });
     }
 
-    // Pre-warm the active voice for a target language (fire-and-forget). The client calls this
-    // when the user picks/changes the target language so the model is loaded before they speak.
+    // Pre-warm text-side models for the selected language pair (fire-and-forget).
+    // Chatterbox stays lazy so transcription is not queued behind a voice load.
     if (req.method === "POST" && pathOnly === "/api/warm") {
       let from = "en", lang = "";
       try {
@@ -1003,7 +1264,6 @@ const server = http.createServer(async (req, res) => {
         if (from === to) return text;
         return cleanTranslatedText(await translateWithRetry(from, to, text));
       });
-      warmTtsLang(to);
       return send(res, 200, { text, translated, from, to });
     }
 

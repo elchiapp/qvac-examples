@@ -73,6 +73,10 @@
       .speed-val{color:var(--accent);font-variant-numeric:tabular-nums}
       .speed-row input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
       .speed-hint{font-size:11px;line-height:15px;color:var(--muted)}
+      .cache-row{display:flex;flex-direction:column;gap:8px;border-top:1px solid rgba(255,255,255,.08);padding-top:14px}
+      .cache-meter{height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+      .cache-meter span{display:block;height:100%;width:0%;background:var(--accent);transition:width .2s ease}
+      .cache-actions{display:flex;justify-content:flex-end}
       /* pre-clone settings gear + modal */
       .ob-gear{position:absolute;top:18px;right:18px;z-index:20;width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.10);border-radius:50%;background:rgba(30,31,32,.6);color:var(--muted2);cursor:pointer;transition:color .15s,border-color .15s}
       .ob-gear:hover{color:var(--text);border-color:rgba(255,255,255,.22)}
@@ -99,7 +103,6 @@
 
       .stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 32px}
       .vr-card{width:928px;max-width:100%;background:var(--card);border-radius:var(--r-card);overflow:hidden;position:relative}
-      .vr-card.setup-busy .vr-head,.vr-card.setup-busy .vr-body{filter:saturate(.75) opacity(.5)}
       .vr-head{display:flex}
       .vr-head .half{flex:1;display:flex;align-items:center;gap:8px;padding:8px 12px}
       .vr-head .half.right{justify-content:flex-start}
@@ -144,16 +147,16 @@
       .action-main.loading:disabled{opacity:1}
       .btn-ring{width:18px;height:18px;border:2px solid rgba(0,0,0,.22);border-top-color:currentColor;border-radius:50%;animation:setupspin .75s linear infinite}
       #playBtn .play-ic{transform:translateX(1.5px)}
-      .pair-setup{position:absolute;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(37,39,40,.54);backdrop-filter:blur(2px)}
+      .pair-setup{position:fixed;right:20px;top:84px;z-index:60;display:flex;justify-content:flex-end;pointer-events:none;max-width:calc(100vw - 40px)}
       .pair-setup[hidden]{display:none}
-      .pair-setup-chip{display:flex;align-items:center;gap:12px;max-width:360px;border:1px solid rgba(255,255,255,.08);border-radius:var(--r-card);background:rgba(30,31,32,.92);box-shadow:0 16px 42px rgba(0,0,0,.36);padding:12px 14px}
-      .pair-ring{--setup-angle:0deg;width:34px;height:34px;flex:0 0 auto;border-radius:50%;position:relative;background:conic-gradient(var(--accent) var(--setup-angle), rgba(255,255,255,.12) 0)}
-      .pair-ring::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--panel)}
+      .pair-setup-chip{display:flex;align-items:center;gap:8px;max-width:100%;border:1px solid rgba(255,255,255,.08);border-radius:var(--r-btn);background:rgba(30,31,32,.9);box-shadow:0 10px 30px rgba(0,0,0,.32);padding:8px 10px}
+      .pair-ring{--setup-angle:0deg;width:18px;height:18px;flex:0 0 auto;border-radius:50%;position:relative;background:conic-gradient(var(--accent) var(--setup-angle), rgba(255,255,255,.12) 0)}
+      .pair-ring::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--panel)}
       .pair-ring.indeterminate{background:conic-gradient(var(--accent) 0 86deg, rgba(255,255,255,.12) 86deg 360deg);animation:setupspin .9s linear infinite}
       @keyframes setupspin{to{transform:rotate(360deg)}}
       .pair-setup-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
-      .pair-setup-title{font-size:14px;font-weight:600;line-height:18px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .pair-setup-sub{font-size:12px;line-height:16px;color:var(--muted2)}
+      .pair-setup-title{font-size:12px;font-weight:600;line-height:16px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .pair-setup-sub{font-size:11px;line-height:14px;color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
       .vr-foot{height:60px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center}
       .vr-foot span{font-size:14px;font-weight:400;color:var(--muted)}
@@ -250,6 +253,13 @@
           <input type="range" id="speedSlider" min="0.5" max="1.2" step="0.01" value="1.00" aria-label="Voice speed">
           <span class="speed-hint">Lower = slower and clearer. Set this before cloning so it stays fixed during the demo.</span>
         </div>
+        <div class="cache-row">
+          <div class="speed-head"><span>Model cache</span><span class="speed-val" id="cacheVal">Checking...</span></div>
+          <div class="cache-meter" aria-hidden="true"><span id="cacheBar"></span></div>
+          <span class="speed-hint" id="cacheBreakdown"></span>
+          <span class="speed-hint" id="cacheHint">Download every model file this demo can need.</span>
+          <div class="cache-actions"><button class="btn-white" id="precacheBtn" type="button">Pre-cache all models</button></div>
+        </div>
         <div class="vr-modal-cta"><button class="btn-white" id="settingsDone" type="button">Done</button></div>
       </div>
     </div>
@@ -260,6 +270,7 @@
         <div class="topbar-in">
           <div class="brand" id="brand"></div>
           <div class="top-actions">
+            <button class="pill-btn" id="btnSettingsApp"></button>
             <button class="pill-btn" id="btnReset"></button>
             <button class="pill-btn" id="btnProto"></button>
           </div>
@@ -295,7 +306,7 @@
               <span class="pair-ring indeterminate" id="pairSetupRing"></span>
               <span class="pair-setup-copy">
                 <span class="pair-setup-title" id="pairSetupTitle">Setting up language pair</span>
-                <span class="pair-setup-sub" id="pairSetupSub">Preparing the on-device models.</span>
+                <span class="pair-setup-sub" id="pairSetupSub">Preparing speech and translation.</span>
               </span>
             </div>
           </div>
@@ -366,6 +377,7 @@
         dbar:'<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>',
         clone:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M5 10a7 7 0 0 0 14 0"/></svg>',
         share:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/></svg>',
+        gear:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
         reset:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>',
         translate:'<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>',
         voice:'<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>',
@@ -379,6 +391,7 @@
       // paint static icons
       $("heroMark").innerHTML='<div class="qpix"></div>';
       $("brand").innerHTML=IC.logo+'<span>Voice Relay</span>';
+      $("btnSettingsApp").innerHTML=IC.gear+'<span>Models</span>';
       $("btnReset").innerHTML=IC.reset+'<span>Record a new voice</span>';
       $("btnProto").innerHTML=IC.share+'<span>Receive Prototype Link</span>'+IC.dbar;
       $("cb").innerHTML=IC.check;
@@ -401,6 +414,7 @@
         es:"Hola, esta es mi voz. Estoy grabando una muestra corta. Me gustan las mananas claras, el cafe fuerte y una buena conversacion. Uno, dos, tres, cuatro, cinco. Gracias por escuchar.",
         fr:"Bonjour, voici ma voix. J'enregistre un court echantillon. J'aime les matins clairs, le cafe fort et une bonne conversation. Un, deux, trois, quatre, cinq. Merci de m'ecouter."
       };
+      var CLONE_TARGET_SECONDS=15;
       var LANGNAMES={en:"English",it:"Italiano",es:"Espanol",fr:"Francais"};
       var DEFAULT_STT_LANGS=Object.assign({},LANGNAMES);
       // suggestion + placeholder shown while recording, in the language the user SPEAKS (fromLang)
@@ -431,9 +445,13 @@
       var pairSetupLocal=false, pairSetupProgress=null, pairSetupPhase="";
 
       // ---- generic recorder (returns a controller with stop()) ----
-      function startRecording(onDone){
+      function startRecording(onDone,onError,onReady){
         err.textContent="";
-        if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ err.textContent="Microphone not supported here."; return null; }
+        if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+          err.textContent="Microphone not supported here.";
+          if(onError) onError("Microphone not supported here.");
+          return null;
+        }
         var rec=null,chunks=[],stream=null,stopMeter=null,ctrl={stop:function(){}};
         navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){
           stream=s; chunks=[]; var opts={};
@@ -443,10 +461,11 @@
           }
           rec=new MediaRecorder(stream,opts);
           rec.ondataavailable=function(e){ if(e.data&&e.data.size>0)chunks.push(e.data); };
-          rec.onstop=function(){ var blob=new Blob(chunks,{type:(rec&&rec.mimeType)||"audio/webm"}); if(stopMeter)stopMeter(); if(stream)stream.getTracks().forEach(function(t){t.stop();}); if(blob.size<1200){err.textContent="Too short, try again.";setOrb("standby");return;} onDone(blob); };
+          rec.onstop=function(){ var blob=new Blob(chunks,{type:(rec&&rec.mimeType)||"audio/webm"}); if(stopMeter)stopMeter(); if(stream)stream.getTracks().forEach(function(t){t.stop();}); if(blob.size<1200){err.textContent="Too short, try again."; if(onError) onError("Too short, try again."); setOrb("standby"); return;} onDone(blob); };
           rec.start(); setOrb("listening");
+          if(onReady) onReady();
           ctrl.stop=function(){ try{rec.stop();}catch(e){} };
-        }).catch(function(){ err.textContent="Microphone access denied."; setOrb("standby"); });
+        }).catch(function(){ err.textContent="Microphone access denied."; if(onError) onError("Microphone access denied."); setOrb("standby"); });
         return ctrl;
       }
 
@@ -455,16 +474,74 @@
       $("obStart").addEventListener("click",function(){ openClone(); });
       // Pre-clone voice settings (gear -> modal): voice-speed slider, pushed to the server (debounced).
       (function(){
-        var sl=$("speedSlider"), val=$("speedVal"), modal=$("settingsModal"), gear=$("btnSettings"), t=null;
-        if(!sl||!modal||!gear) return;
+        var sl=$("speedSlider"), val=$("speedVal"), modal=$("settingsModal"), gear=$("btnSettings"), appGear=$("btnSettingsApp"), t=null;
+        var cacheBtn=$("precacheBtn"), cacheVal=$("cacheVal"), cacheHint=$("cacheHint"), cacheBar=$("cacheBar"), cacheBreakdown=$("cacheBreakdown"), cachePoll=null;
+        if(!sl||!modal||(!gear&&!appGear)) return;
         function show(v){ val.textContent=Number(v).toFixed(2)+"x"; }
         function sync(){ fetch("/api/state").then(function(r){return r.json();}).then(function(s){ if(s&&s.speed!=null){ sl.value=s.speed; show(s.speed); } }).catch(function(){}); }
-        function open(){ sync(); modal.hidden=false; }
-        function close(){ modal.hidden=true; }
-        gear.addEventListener("click",open);
+        function cachePercent(d){
+          var job=d&&d.job;
+          if(job&&job.state==="running"&&job.total){
+            var done=Math.max(Number(job.completed)||0,Number(d.cached)||0);
+            return Math.max(0,Math.min(100,((done+(Number(job.currentProgress)||0)/100)/job.total)*100));
+          }
+          return d&&d.total?Math.max(0,Math.min(100,(d.cached/d.total)*100)):0;
+        }
+        function renderCacheBreakdown(d){
+          if(!cacheBreakdown) return;
+          var names={speech:"Speech",voice:"Voice",translation:"Translation"}, order=["speech","voice","translation"], by={};
+          (d.items||[]).forEach(function(item){
+            var role=item.role||"other", bucket=by[role]||(by[role]={total:0,cached:0,unavailable:0});
+            if(item.available===false){ bucket.unavailable++; return; }
+            bucket.total++;
+            if(item.cached) bucket.cached++;
+          });
+          cacheBreakdown.textContent=order.map(function(role){
+            var b=by[role]; if(!b) return "";
+            if(!b.total&&b.unavailable) return names[role]+": enroll first";
+            return names[role]+": "+b.cached+"/"+b.total+" cached";
+          }).filter(Boolean).join(" · ");
+        }
+        function renderCache(d){
+          if(!cacheBtn||!cacheVal||!cacheHint||!cacheBar||!d) return;
+          var job=d.job||{}, running=job.state==="running", pct=cachePercent(d);
+          renderCacheBreakdown(d);
+          cacheBar.style.width=pct.toFixed(0)+"%";
+          if(running){
+            var done=Math.max(Number(job.completed)||0,Number(d.cached)||0);
+            cacheVal.textContent=done+"/"+(job.total||d.total||0);
+            cacheHint.textContent=(job.current&&job.current.label?job.current.label:"Preparing models")+(job.currentProgress!=null?"... "+Math.round(job.currentProgress)+"%":"...");
+            cacheBtn.textContent="Caching...";
+            cacheBtn.disabled=true;
+            scheduleCachePoll();
+            return;
+          }
+          cacheVal.textContent=d.total?(d.cached+"/"+d.total):"None";
+          if(d.missingBytes>0) cacheHint.textContent=formatBytes(d.missingBytes)+" remaining across "+d.total+" model groups.";
+          else if(d.unavailable>0) cacheHint.textContent="Cached. Enroll a voice to include voice model files.";
+          else cacheHint.textContent="All required model files are cached.";
+          if(job.state==="error"&&job.error) cacheHint.textContent="Error: "+job.error;
+          cacheBtn.textContent=d.missingBytes>0?"Pre-cache all models":"Cached";
+          cacheBtn.disabled=!d.total||!d.missingBytes;
+        }
+        function refreshCache(){
+          if(!cacheBtn) return Promise.resolve();
+          return fetch("/api/precache").then(function(r){return r.json();}).then(renderCache).catch(function(){ cacheHint.textContent="Could not check model cache."; });
+        }
+        function scheduleCachePoll(){ clearTimeout(cachePoll); cachePoll=setTimeout(refreshCache,1200); }
+        function open(){ sync(); refreshCache(); modal.hidden=false; }
+        function close(){ modal.hidden=true; clearTimeout(cachePoll); }
+        if(gear) gear.addEventListener("click",open);
+        if(appGear) appGear.addEventListener("click",open);
         $("settingsClose").addEventListener("click",close);
         $("settingsDone").addEventListener("click",close);
         modal.addEventListener("click",function(e){ if(e.target===modal) close(); });
+        if(cacheBtn){
+          cacheBtn.addEventListener("click",function(){
+            cacheBtn.disabled=true;
+            fetch("/api/precache",{method:"POST"}).then(function(r){return r.json();}).then(renderCache).catch(function(){ cacheHint.textContent="Could not start model cache."; cacheBtn.disabled=false; });
+          });
+        }
         sl.addEventListener("input",function(){
           show(sl.value);
           clearTimeout(t);
@@ -473,6 +550,7 @@
           },180);
         });
         sync();
+        refreshCache();
       })();
 
       function enterApp(){
@@ -482,9 +560,9 @@
 
       // ===================== STATE =====================
       function langName(map,code){ return (map&&map[code])||LANGNAMES[code]||code.toUpperCase(); }
-      function statusClass(s){ if(!s)return ""; if(s.preparing)return "preparing"; if(s.ready)return "ready"; if(s.cached)return "cached"; return "missing"; }
+      function statusClass(s){ if(!s)return ""; if(s.error)return "missing"; if(s.preparing)return "preparing"; if(s.ready)return "ready"; if(s.cached)return "cached"; return "missing"; }
       function formatBytes(n){ if(!n)return ""; if(n>=1073741824)return (n/1073741824).toFixed(1)+" GB"; if(n>=1048576)return Math.ceil(n/1048576)+" MB"; return Math.ceil(n/1024)+" KB"; }
-      function statusLabel(s){ if(!s)return ""; if(s.preparing)return "setting up"; if(s.ready)return "ready"; if(s.cached)return "cached"; return formatBytes(s.missingBytes)||"download"; }
+      function statusLabel(s){ if(!s)return ""; if(s.error)return "error"; if(s.preparing)return "setting up"; if(s.ready)return "ready"; if(s.cached)return "cached"; return formatBytes(s.missingBytes)||"download"; }
       function statusDot(s){ var c=statusClass(s); return c?'<span class="status-dot '+c+'" title="'+esc(statusLabel(s))+'"></span>':""; }
       function currentSetupStatus(){
         var c=setupStatus.current;
@@ -495,12 +573,13 @@
         return !!(pairSetupLocal||(c&&c.preparing));
       }
       function pairSetupDetail(c){
+        if(c&&c.error) return c.error;
         if(pairSetupProgress!=null){
           return "Downloading "+(pairSetupPhase||"model")+"... "+Math.round(pairSetupProgress)+"%";
         }
         if(c&&c.missingBytes>0) return "Downloading "+formatBytes(c.missingBytes)+" of required models.";
-        if(c&&c.cached&&!c.ready) return "Loading cached models into memory.";
-        return "Preparing the on-device models.";
+        if(c&&c.cached&&!c.ready) return "Loading cached text models.";
+        return "Working in the background.";
       }
       function setPairSetupProgress(pct){
         var ring=$("pairSetupRing");
@@ -514,22 +593,15 @@
         ring.classList.remove("indeterminate");
         ring.style.setProperty("--setup-angle",(clamped*3.6).toFixed(1)+"deg");
       }
-      function setCardControlsLocked(locked){
-        $("fromDD").disabled=locked;
-        $("toDD").disabled=locked;
-        $("speakBtn").disabled=locked;
-        $("sentence").setAttribute("contenteditable",locked?"false":"true");
-      }
       function updatePairSetupUi(){
         var c=currentSetupStatus();
         var busy=isPairSetupBusy()&&!(c&&c.ready&&!c.preparing);
-        var box=$("pairSetup"), card=document.querySelector(".vr-card");
+        var box=$("pairSetup");
         if(c&&c.ready&&!c.preparing){ pairSetupLocal=false; pairSetupProgress=null; pairSetupPhase=""; busy=false; }
-        if(card) card.classList.toggle("setup-busy",busy);
+        if(c&&c.error){ pairSetupLocal=false; pairSetupProgress=null; pairSetupPhase=""; busy=false; err.textContent=c.error; }
         if(box) box.hidden=!busy;
-        setCardControlsLocked(busy);
         if(busy){
-          $("pairSetupTitle").textContent="Setting up "+langName(sttLangs,fromLang)+" -> "+langName(ttsLangs,tgtLang);
+          $("pairSetupTitle").textContent="Preparing language pair";
           $("pairSetupSub").textContent=pairSetupDetail(c);
           setPairSetupProgress(pairSetupProgress);
         }
@@ -566,6 +638,7 @@
       function prepareSelected(){
         if(!fromLang||!tgtLang){ return; }
         if(activeVoice) beginPairSetup();
+        err.textContent="";
         refreshSetupStatus();
         if(!activeVoice){ updatePairSetupUi(); return; }
         var prepFrom=currentSourceForSetup();
@@ -574,7 +647,7 @@
         lastPrepareKey=key;
         fetch("/api/prepare",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({from:prepFrom,to:tgtLang})})
           .then(function(r){return r.json();}).then(function(d){ if(d.error)throw new Error(d.error); applySetupStatus(d); scheduleStatusPoll(); })
-          .catch(function(){ if(lastPrepareKey===key) lastPrepareKey=""; pairSetupLocal=false; updatePairSetupUi(); });
+          .catch(function(e){ if(lastPrepareKey===key) lastPrepareKey=""; pairSetupLocal=false; err.textContent="Error: "+e.message; updatePairSetupUi(); });
       }
       async function refreshState(){
         try{
@@ -651,8 +724,9 @@
       }
       function updatePlayButton(){
         var btn=$("playBtn");
-        var canPlay=activeVoice&&translationReady&&translatedText&&ttsReady&&!translating&&!isPairSetupBusy();
-        btn.disabled=!ttsActive&&!canPlay;
+        var canRequestAudio=activeVoice&&translationReady&&translatedText&&!translating;
+        var canPlay=canRequestAudio&&ttsReady;
+        btn.disabled=!ttsActive&&(!canRequestAudio||ttsPreparing);
         btn.classList.toggle("loading",ttsPreparing&&!ttsActive);
         btn.classList.toggle("active",ttsActive);
         btn.innerHTML=ttsActive?IC.stop:(ttsPreparing?'<span class="btn-ring"></span>':IC.play);
@@ -701,15 +775,6 @@
         if(!text){ clearTranslation(); return; }
         var key=translationKeyFor(text);
         if(hasFreshTranslation(text)||(translating&&pendingTranslationKey===key)){ updatePlayButton(); return; }
-        if(isPairSetupBusy()){
-          translatedText="";
-          translatedKey="";
-          pendingTranslationKey="";
-          translationReady=false;
-          translating=false;
-          updatePlayButton();
-          return;
-        }
         markTranslationPending(text);
         translateTimer=setTimeout(function(){ translateNow(text); }, delay==null?650:delay);
       }
@@ -718,7 +783,6 @@
         var text=(expectedText||currentInputText()).trim();
         if(!text){ clearTranslation(); return; }
         if(hasFreshTranslation(text)){ updatePlayButton(); return; }
-        if(isPairSetupBusy()){ scheduleTranslation(200); return; }
         var key=translationKeyFor(text);
         var seq=++translateSeq;
         markTranslationPending(text);
@@ -735,7 +799,6 @@
           setTranslationPreview(translatedText,false);
           setTranslateState(translationReady?"Translated":"");
           if(!translationReady) err.textContent="No translation produced.";
-          else prepareTtsAudio(text);
         }catch(e){
           if(seq===translateSeq){ err.textContent="Error: "+e.message; setTranslationPreview("",false); setTranslateState(""); translationReady=false; translatedText=""; translatedKey=""; pendingTranslationKey=""; clearPreparedTts(true); }
         }finally{
@@ -775,7 +838,7 @@
             if(!clean){ err.textContent="No speech detected."; clearTranslation(); setOrb("standby"); }
             else await translateNow(clean);
           }catch(e){ err.textContent="Error: "+e.message; setOrb("standby"); setSentence(ph(),true); }
-        });
+        },setSpeakIdle);
         if(micCtrl) setSpeakListening();
       });
 
@@ -787,7 +850,7 @@
       function makeTtsKey(sourceText){ return [activeVoice&&activeVoice.id||"",fromLang,tgtLang,sourceText||currentInputText(),translatedText].join("\n"); }
       async function prepareTtsAudio(sourceText){
         sourceText=(sourceText||currentInputText()).trim();
-        if(!activeVoice||!translationReady||!translatedText||!sourceText||isPairSetupBusy()) return;
+        if(!activeVoice||!translationReady||!translatedText||!sourceText) return;
         var key=makeTtsKey(sourceText);
         if(ttsReady&&ttsAudioKey===key) return;
         if(ttsPreparing&&ttsAudioKey===key) return;
@@ -931,13 +994,34 @@
       $("cloneBack").addEventListener("click",function(){ stopCloneRec(); showCloneStep(1); });
       $("cloneGo").addEventListener("click",function(){
         normalizeCloneLang();
-        $("cloneScriptText").textContent=cloneScriptText(); $("cloneStatus").textContent="Listening..."; $("cloneDone").disabled=false;
+        $("cloneScriptText").textContent=cloneScriptText(); $("cloneStatus").textContent="Listening..."; $("cloneDone").disabled=true;
         showCloneStep(2); startCloneRec();
       });
-      var cloneCtrl=null, cloning=false;
-      function startCloneRec(){ cloning=true; cloneCtrl=startRecording(function(blob){ enroll(blob); }); }
-      function stopCloneRec(){ if(cloneCtrl&&cloning){ cloning=false; cloneCtrl.stop(); cloneCtrl=null; } setOrb("standby"); }
-      $("cloneDone").addEventListener("click",function(){ if(cloneCtrl&&cloning){ cloning=false; $("cloneStatus").textContent="Cloning your voice..."; $("cloneDone").disabled=true; cloneCtrl.stop(); cloneCtrl=null; } });
+      var cloneCtrl=null, cloning=false, cloneSaving=false, cloneStartedAt=0, cloneTimer=null;
+      function clearCloneTimer(){ if(cloneTimer){ clearInterval(cloneTimer); cloneTimer=null; } }
+      function cloneRemainingSeconds(){ return cloneStartedAt?Math.max(0,CLONE_TARGET_SECONDS-Math.floor((Date.now()-cloneStartedAt)/1000)):CLONE_TARGET_SECONDS; }
+      function updateCloneCountdown(){
+        if(!cloning)return;
+        var left=cloneRemainingSeconds();
+        $("cloneDone").disabled=left>0;
+        $("cloneStatus").textContent=left>0?"Keep speaking for "+left+" more second"+(left===1?"":"s")+".":"Ready when you are.";
+      }
+      function cloneSaveErrorMessage(e){
+        var msg=(e&&e.message)||"";
+        if(/voice sample|record at least|too short|seconds/i.test(msg)) return msg;
+        return "Could not save voice. Try again.";
+      }
+      function startCloneRec(){
+        cloning=true; cloneSaving=false; cloneStartedAt=0; clearCloneTimer(); $("cloneDone").disabled=true; $("cloneStatus").textContent="Starting microphone...";
+        cloneCtrl=startRecording(function(blob){ clearCloneTimer(); if(!cloneSaving){ setOrb("standby"); return; } enroll(blob); },function(message){ clearCloneTimer(); cloning=false; cloneSaving=false; cloneCtrl=null; cloneStartedAt=0; $("cloneStatus").textContent=message; $("cloneDone").disabled=true; },function(){ cloneStartedAt=Date.now(); updateCloneCountdown(); cloneTimer=setInterval(updateCloneCountdown,500); });
+      }
+      function stopCloneRec(){ clearCloneTimer(); cloneSaving=false; cloneStartedAt=0; if(cloneCtrl&&cloning){ cloning=false; cloneCtrl.stop(); cloneCtrl=null; } setOrb("standby"); }
+      $("cloneDone").addEventListener("click",function(){
+        if(cloneCtrl&&cloning){
+          if(cloneRemainingSeconds()>0){ updateCloneCountdown(); return; }
+          clearCloneTimer(); cloning=false; cloneSaving=true; cloneStartedAt=0; $("cloneStatus").textContent="Cloning your voice..."; $("cloneDone").disabled=true; cloneCtrl.stop(); cloneCtrl=null;
+        }
+      });
       async function enroll(blob){
         try{
           var r=await fetch("/api/enroll",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-Consent":"yes","X-Voice-Name":encodeURIComponent(""),"X-Voice-Lang":cloneLang},body:await blob.arrayBuffer()});
@@ -947,7 +1031,7 @@
           if(!$("app").classList.contains("show")) await enterApp(); else await refreshState();
           setOrb("standby");
           prepareSelected();
-        }catch(e){ err.textContent="Error: "+e.message; $("cloneStatus").textContent="Listening..."; $("cloneDone").disabled=false; setOrb("standby"); }
+        }catch(e){ cloneSaving=false; err.textContent="Error: "+e.message; $("cloneStatus").textContent=cloneSaveErrorMessage(e); $("cloneDone").disabled=false; setOrb("standby"); }
       }
 
       // ---- prototype modal ----

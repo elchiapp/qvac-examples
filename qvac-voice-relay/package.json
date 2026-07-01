@@ -10,6 +10,6 @@
     "@qvac/sdk": "0.13.5"
   },
   "overrides": {
-    "@qvac/tts-ggml": "0.3.5"
+    "@qvac/tts-ggml": "0.3.6"
   }
 }

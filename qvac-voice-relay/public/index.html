@@ -73,6 +73,10 @@
       .speed-val{color:var(--accent);font-variant-numeric:tabular-nums}
       .speed-row input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer}
       .speed-hint{font-size:11px;line-height:15px;color:var(--muted)}
+      .cache-row{display:flex;flex-direction:column;gap:8px;border-top:1px solid rgba(255,255,255,.08);padding-top:14px}
+      .cache-meter{height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+      .cache-meter span{display:block;height:100%;width:0%;background:var(--accent);transition:width .2s ease}
+      .cache-actions{display:flex;justify-content:flex-end}
       /* pre-clone settings gear + modal */
       .ob-gear{position:absolute;top:18px;right:18px;z-index:20;width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.10);border-radius:50%;background:rgba(30,31,32,.6);color:var(--muted2);cursor:pointer;transition:color .15s,border-color .15s}
       .ob-gear:hover{color:var(--text);border-color:rgba(255,255,255,.22)}
@@ -250,6 +254,13 @@
           <input type="range" id="speedSlider" min="0.5" max="1.2" step="0.01" value="1.00" aria-label="Voice speed">
           <span class="speed-hint">Lower = slower and clearer. Set this before cloning so it stays fixed during the demo.</span>
         </div>
+        <div class="cache-row">
+          <div class="speed-head"><span>Model cache</span><span class="speed-val" id="cacheVal">Checking...</span></div>
+          <div class="cache-meter" aria-hidden="true"><span id="cacheBar"></span></div>
+          <span class="speed-hint" id="cacheBreakdown"></span>
+          <span class="speed-hint" id="cacheHint">Download every model file this demo can need.</span>
+          <div class="cache-actions"><button class="btn-white" id="precacheBtn" type="button">Pre-cache all models</button></div>
+        </div>
         <div class="vr-modal-cta"><button class="btn-white" id="settingsDone" type="button">Done</button></div>
       </div>
     </div>
@@ -260,6 +271,7 @@
         <div class="topbar-in">
           <div class="brand" id="brand"></div>
           <div class="top-actions">
+            <button class="pill-btn" id="btnSettingsApp"></button>
             <button class="pill-btn" id="btnReset"></button>
             <button class="pill-btn" id="btnProto"></button>
           </div>
@@ -366,6 +378,7 @@
         dbar:'<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>',
         clone:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M5 10a7 7 0 0 0 14 0"/></svg>',
         share:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"/></svg>',
+        gear:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
         reset:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>',
         translate:'<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>',
         voice:'<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>',
@@ -379,6 +392,7 @@
       // paint static icons
       $("heroMark").innerHTML='<div class="qpix"></div>';
       $("brand").innerHTML=IC.logo+'<span>Voice Relay</span>';
+      $("btnSettingsApp").innerHTML=IC.gear+'<span>Models</span>';
       $("btnReset").innerHTML=IC.reset+'<span>Record a new voice</span>';
       $("btnProto").innerHTML=IC.share+'<span>Receive Prototype Link</span>'+IC.dbar;
       $("cb").innerHTML=IC.check;
@@ -431,9 +445,13 @@
       var pairSetupLocal=false, pairSetupProgress=null, pairSetupPhase="";
 
       // ---- generic recorder (returns a controller with stop()) ----
-      function startRecording(onDone){
+      function startRecording(onDone,onError){
         err.textContent="";
-        if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ err.textContent="Microphone not supported here."; return null; }
+        if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+          err.textContent="Microphone not supported here.";
+          if(onError) onError("Microphone not supported here.");
+          return null;
+        }
         var rec=null,chunks=[],stream=null,stopMeter=null,ctrl={stop:function(){}};
         navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){
           stream=s; chunks=[]; var opts={};
@@ -443,10 +461,10 @@
           }
           rec=new MediaRecorder(stream,opts);
           rec.ondataavailable=function(e){ if(e.data&&e.data.size>0)chunks.push(e.data); };
-          rec.onstop=function(){ var blob=new Blob(chunks,{type:(rec&&rec.mimeType)||"audio/webm"}); if(stopMeter)stopMeter(); if(stream)stream.getTracks().forEach(function(t){t.stop();}); if(blob.size<1200){err.textContent="Too short, try again.";setOrb("standby");return;} onDone(blob); };
+          rec.onstop=function(){ var blob=new Blob(chunks,{type:(rec&&rec.mimeType)||"audio/webm"}); if(stopMeter)stopMeter(); if(stream)stream.getTracks().forEach(function(t){t.stop();}); if(blob.size<1200){err.textContent="Too short, try again."; if(onError) onError("Too short, try again."); setOrb("standby"); return;} onDone(blob); };
           rec.start(); setOrb("listening");
           ctrl.stop=function(){ try{rec.stop();}catch(e){} };
-        }).catch(function(){ err.textContent="Microphone access denied."; setOrb("standby"); });
+        }).catch(function(){ err.textContent="Microphone access denied."; if(onError) onError("Microphone access denied."); setOrb("standby"); });
         return ctrl;
       }
 
@@ -455,16 +473,74 @@
       $("obStart").addEventListener("click",function(){ openClone(); });
       // Pre-clone voice settings (gear -> modal): voice-speed slider, pushed to the server (debounced).
       (function(){
-        var sl=$("speedSlider"), val=$("speedVal"), modal=$("settingsModal"), gear=$("btnSettings"), t=null;
-        if(!sl||!modal||!gear) return;
+        var sl=$("speedSlider"), val=$("speedVal"), modal=$("settingsModal"), gear=$("btnSettings"), appGear=$("btnSettingsApp"), t=null;
+        var cacheBtn=$("precacheBtn"), cacheVal=$("cacheVal"), cacheHint=$("cacheHint"), cacheBar=$("cacheBar"), cacheBreakdown=$("cacheBreakdown"), cachePoll=null;
+        if(!sl||!modal||(!gear&&!appGear)) return;
         function show(v){ val.textContent=Number(v).toFixed(2)+"x"; }
         function sync(){ fetch("/api/state").then(function(r){return r.json();}).then(function(s){ if(s&&s.speed!=null){ sl.value=s.speed; show(s.speed); } }).catch(function(){}); }
-        function open(){ sync(); modal.hidden=false; }
-        function close(){ modal.hidden=true; }
-        gear.addEventListener("click",open);
+        function cachePercent(d){
+          var job=d&&d.job;
+          if(job&&job.state==="running"&&job.total){
+            var done=Math.max(Number(job.completed)||0,Number(d.cached)||0);
+            return Math.max(0,Math.min(100,((done+(Number(job.currentProgress)||0)/100)/job.total)*100));
+          }
+          return d&&d.total?Math.max(0,Math.min(100,(d.cached/d.total)*100)):0;
+        }
+        function renderCacheBreakdown(d){
+          if(!cacheBreakdown) return;
+          var names={speech:"Speech",voice:"Voice",translation:"Translation"}, order=["speech","voice","translation"], by={};
+          (d.items||[]).forEach(function(item){
+            var role=item.role||"other", bucket=by[role]||(by[role]={total:0,cached:0,unavailable:0});
+            if(item.available===false){ bucket.unavailable++; return; }
+            bucket.total++;
+            if(item.cached) bucket.cached++;
+          });
+          cacheBreakdown.textContent=order.map(function(role){
+            var b=by[role]; if(!b) return "";
+            if(!b.total&&b.unavailable) return names[role]+": enroll first";
+            return names[role]+": "+b.cached+"/"+b.total+" cached";
+          }).filter(Boolean).join(" · ");
+        }
+        function renderCache(d){
+          if(!cacheBtn||!cacheVal||!cacheHint||!cacheBar||!d) return;
+          var job=d.job||{}, running=job.state==="running", pct=cachePercent(d);
+          renderCacheBreakdown(d);
+          cacheBar.style.width=pct.toFixed(0)+"%";
+          if(running){
+            var done=Math.max(Number(job.completed)||0,Number(d.cached)||0);
+            cacheVal.textContent=done+"/"+(job.total||d.total||0);
+            cacheHint.textContent=(job.current&&job.current.label?job.current.label:"Preparing models")+(job.currentProgress!=null?"... "+Math.round(job.currentProgress)+"%":"...");
+            cacheBtn.textContent="Caching...";
+            cacheBtn.disabled=true;
+            scheduleCachePoll();
+            return;
+          }
+          cacheVal.textContent=d.total?(d.cached+"/"+d.total):"None";
+          if(d.missingBytes>0) cacheHint.textContent=formatBytes(d.missingBytes)+" remaining across "+d.total+" model groups.";
+          else if(d.unavailable>0) cacheHint.textContent="Cached. Enroll a voice to include voice model files.";
+          else cacheHint.textContent="All required model files are cached.";
+          if(job.state==="error"&&job.error) cacheHint.textContent="Error: "+job.error;
+          cacheBtn.textContent=d.missingBytes>0?"Pre-cache all models":"Cached";
+          cacheBtn.disabled=!d.total||!d.missingBytes;
+        }
+        function refreshCache(){
+          if(!cacheBtn) return Promise.resolve();
+          return fetch("/api/precache").then(function(r){return r.json();}).then(renderCache).catch(function(){ cacheHint.textContent="Could not check model cache."; });
+        }
+        function scheduleCachePoll(){ clearTimeout(cachePoll); cachePoll=setTimeout(refreshCache,1200); }
+        function open(){ sync(); refreshCache(); modal.hidden=false; }
+        function close(){ modal.hidden=true; clearTimeout(cachePoll); }
+        if(gear) gear.addEventListener("click",open);
+        if(appGear) appGear.addEventListener("click",open);
         $("settingsClose").addEventListener("click",close);
         $("settingsDone").addEventListener("click",close);
         modal.addEventListener("click",function(e){ if(e.target===modal) close(); });
+        if(cacheBtn){
+          cacheBtn.addEventListener("click",function(){
+            cacheBtn.disabled=true;
+            fetch("/api/precache",{method:"POST"}).then(function(r){return r.json();}).then(renderCache).catch(function(){ cacheHint.textContent="Could not start model cache."; cacheBtn.disabled=false; });
+          });
+        }
         sl.addEventListener("input",function(){
           show(sl.value);
           clearTimeout(t);
@@ -473,6 +549,7 @@
           },180);
         });
         sync();
+        refreshCache();
       })();
 
       function enterApp(){
@@ -775,7 +852,7 @@
             if(!clean){ err.textContent="No speech detected."; clearTranslation(); setOrb("standby"); }
             else await translateNow(clean);
           }catch(e){ err.textContent="Error: "+e.message; setOrb("standby"); setSentence(ph(),true); }
-        });
+        },setSpeakIdle);
         if(micCtrl) setSpeakListening();
       });
 
@@ -935,7 +1012,7 @@
         showCloneStep(2); startCloneRec();
       });
       var cloneCtrl=null, cloning=false;
-      function startCloneRec(){ cloning=true; cloneCtrl=startRecording(function(blob){ enroll(blob); }); }
+      function startCloneRec(){ cloning=true; cloneCtrl=startRecording(function(blob){ enroll(blob); },function(message){ cloning=false; cloneCtrl=null; $("cloneStatus").textContent=message; $("cloneDone").disabled=true; }); }
       function stopCloneRec(){ if(cloneCtrl&&cloning){ cloning=false; cloneCtrl.stop(); cloneCtrl=null; } setOrb("standby"); }
       $("cloneDone").addEventListener("click",function(){ if(cloneCtrl&&cloning){ cloning=false; $("cloneStatus").textContent="Cloning your voice..."; $("cloneDone").disabled=true; cloneCtrl.stop(); cloneCtrl=null; } });
       async function enroll(blob){
@@ -947,7 +1024,7 @@
           if(!$("app").classList.contains("show")) await enterApp(); else await refreshState();
           setOrb("standby");
           prepareSelected();
-        }catch(e){ err.textContent="Error: "+e.message; $("cloneStatus").textContent="Listening..."; $("cloneDone").disabled=false; setOrb("standby"); }
+        }catch(e){ err.textContent="Error: "+e.message; $("cloneStatus").textContent="Could not save voice. Try again."; $("cloneDone").disabled=false; setOrb("standby"); }
       }
 
       // ---- prototype modal ----
